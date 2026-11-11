@@ -3,6 +3,7 @@ const f = require("node:fs/promises"),
   c = require("node:crypto");
 module.exports = {
   apply(ctx) {
+    require("./ai-tools.js").register(ctx);
     const S = { type: "string" },
       P = {
         source: S,
@@ -16,7 +17,12 @@ module.exports = {
     ])
       ctx.tool({
         name,
-        description: "地图只读来源接口",
+        description:
+          name === "mapcanvas_sources"
+            ? "列出已授权地图来源及sourceId；首次地图任务先mapcanvas_help，再mapcanvas_preview查看真实图像。"
+            : name === "mapcanvas_browse"
+              ? "浏览来源内地图目录，返回YAML/PGM/PNG路径。预览图像请用mapcanvas_preview。"
+              : "低层按块读取地图文件并返回Base64及SHA；人工分块核验用，图像识别请用mapcanvas_preview。",
         parameters: {
           type: "object",
           properties: name === "mapcanvas_sources" ? {} : P,
