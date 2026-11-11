@@ -1,7 +1,7 @@
 {
   "id": "mapcanvas",
   "name": "栅图 MapCanvas",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "main": "index.js",
   "description": "ROS栅格地图编辑：可收起路径、灰色画笔、AI预览/试画/编辑提案与使用指南。",
   "workbench": {
