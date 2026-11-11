@@ -1,4 +1,4 @@
-# MapCanvas 0.2.0：Aide 工具与提示词
+# MapCanvas 0.2.1：Aide 工具与提示词
 
 本指南随插件安装；工具描述会进入 Aide 的可调用工具列表。首次地图任务调用 `mapcanvas_help` 获取指南，工作台的“AI工具指南”也可查看。
 
@@ -16,7 +16,7 @@
 
 ROS 世界坐标转换：先取像素中心 `u=(x+0.5)*resolution`、`v=(height-y-0.5)*resolution`，再按 YAML 的 origin yaw 旋转并加 origin 的 x/y。对旋转地图不要忽略 yaw。
 
-- `mode:"wall"` 画占用区域；`"erase"` 画空闲区域；`"gray"` 画未知区域。三者遵循 YAML 的 negate；灰色取 free/occupied 阈值之间可表达的灰度，兼容 16 位 PGM，并非一律写固定 205。
+- `mode:"wall"` 画占用区域；`"erase"` 画空闲区域；`"gray"` 画未知区域。三者遵循 YAML 的 negate；灰色优先沿用原图中最多的有效未知灰度（如128），无有效未知像素时才回退到阈值中点；兼容16位PGM，校验原灰度和Nav2转换到8位后的分类。预览map.unknownBrush返回value/source/count，source为map/fallback/unavailable。GUI在导入时固定选值，AI每次从输入原图选值。不能一律写固定205：例如free_thresh为0.25时205会成为空闲。
 - 笔画：`{type:"stroke",mode:"gray",size:5,points:[[10,10],[20,10]]}`。size 是像素直径；支持单点和连续折线。
 - 实心矩形：`{type:"rect",mode:"wall",x:10,y:5,width:4,height:8}`。区域是 `[x,x+width)` × `[y,y+height)`。
 - 单次最多128操作、4096点，有32百万次估算像素工作量上限。PGM文本导出最多24MiB。全部操作先校验再处理，越界或不合法的批次整体拒绝。

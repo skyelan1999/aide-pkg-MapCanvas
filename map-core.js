@@ -174,14 +174,39 @@
     return b;
   }
 
+  function isUnknown(value, a, max) {
+    const p = a.n ? value / max : 1 - value / max;
+    const byte = Math.round(value * 255 / max);
+    const q = a.n ? byte / 255 : 1 - byte / 255;
+    return p > a.f && p < a.o && q > a.f && q < a.o;
+  }
+  function selectGray(map, a) {
+    const counts = new Uint32Array(map.max + 1);
+    for (const value of map.data) counts[value]++;
+    let value = -1, count = 0;
+    for (let i = 0; i < counts.length; i++) {
+      if (counts[i] > count && isUnknown(i, a, map.max)) {
+        value = i;
+        count = counts[i];
+      }
+    }
+    if (value >= 0) return { value, source: "map", count };
+    try {
+      return { value: brushValue("gray", a, map.max), source: "fallback", count: 0 };
+    } catch {
+      return { value: null, source: "unavailable", count: 0 };
+    }
+  }
   function brushValue(mode, a, max) {
     if (mode === "wall") return a.n * max;
     if (mode === "erase") return (1 - a.n) * max;
     if (mode !== "gray") E("未知画笔");
+    if (Number.isSafeInteger(a.grayValue) && a.grayValue >= 0 && a.grayValue <= max && isUnknown(a.grayValue, a, max))
+      return a.grayValue;
     const probability = (a.f + a.o) / 2;
     const value = Math.round((a.n ? probability : 1 - probability) * max);
     const actual = a.n ? value / max : 1 - value / max;
-    if (!(actual > a.f && actual < a.o)) E("当前灰阶精度不足以表示未知区域");
+    if (!(actual > a.f && actual < a.o) || !isUnknown(value, a, max)) E("当前灰阶精度不足以表示未知区域");
     return value;
   }
   function applyOperations(map, a, operations) {
@@ -191,6 +216,8 @@
       operations.length > 128
     )
       E("需1–128个编辑操作");
+    if (operations.some(op => op?.mode === "gray"))
+      a = { ...a, grayValue: selectGray(map, a).value };
     let work = 0,
       points = 0;
     const integer = (v, min, max) =>
@@ -316,6 +343,7 @@
     encodePGM,
     encodeP2,
     brushValue,
+    selectGray,
     applyOperations,
   });
 });

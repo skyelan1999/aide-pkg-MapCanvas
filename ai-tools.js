@@ -141,6 +141,7 @@ function identity(r) {
     width: r.map.w,
     height: r.map.h,
     maxGray: r.map.max,
+    unknownBrush: core.selectGray(r.map, r.metadata),
     resolution: r.metadata.r,
     origin: r.metadata.a.map(Number),
     negate: r.metadata.n,

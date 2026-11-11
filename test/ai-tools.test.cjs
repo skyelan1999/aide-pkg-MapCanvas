@@ -336,3 +336,42 @@ test("PNG preview/edit and help are executable tools; invalid source/stage paths
       /越界/,
     );
   }));
+
+test("unknown brush inherits exact dominant source gray and freezes GUI value", () => {
+  for (const [max, value] of [[255, 128], [255, 205], [65535, 32896]]) {
+    const metadata = { ...a, f: 0.196, o: 0.65, n: 0 };
+    const m = {w: 6, h: 1, max, data: new Uint16Array([0, max, value, value, value, Math.round(max * .5)])};
+    const before = [...m.data], chosen = core.selectGray(m, metadata);
+    assert.deepEqual(chosen, {value, source:"map", count:before.filter(v=>v===value).length});
+    const r = core.applyOperations(m, metadata, [{type:"rect",mode:"gray",x:0,y:0,width:2,height:1}]);
+    assert.deepEqual([...r.map.data.slice(0,2)], [value,value]);
+    assert.deepEqual([...m.data],before);
+    const frozen = {...metadata,grayValue:chosen.value};
+    m.data.fill(max);
+    assert.equal(core.brushValue("gray", frozen, max),value);
+    assert.equal(core.selectGray(m, metadata).source,"fallback");
+  }
+  const neg = {...a,n:1,f:.25,o:.65};
+  assert.equal(core.selectGray({max:255,data:[128,128,140,0,255]},neg).value,128);
+  const narrow = {...a,n:0,f:.499,o:.501};
+  const unsupported = core.selectGray({max:65535,data:[32768]},narrow);
+  assert.equal(unsupported.source,"unavailable","8-bit Nav2 conversion must also remain unknown");
+  assert.equal(core.selectGray({max:1,data:[0,1]},a).source,"unavailable");
+  assert.throws(()=>core.applyOperations({w:2,h:1,max:1,data:new Uint16Array([0,1])},a,[{type:"rect",mode:"gray",x:0,y:0,width:1,height:1}]));
+});
+
+test("AI preview, dry-run and paired export preserve source unknown gray128", () =>
+  fixture(async ({api,dir}) => {
+    const m=map();m.data[0]=m.data[1]=m.data[2]=128;
+    fs.writeFileSync(path.join(dir,"map.pgm"),core.encodePGM(m));
+    const p=await tools.get("mapcanvas_preview").handler({yamlPath:"map.yaml"},api);
+    assert.deepEqual(p.map.unknownBrush,{value:128,source:"map",count:3});
+    const args={yamlPath:"map.yaml",expectedImageSha256:p.map.imageSha256,expectedYamlSha256:p.map.yamlSha256,operations:[{type:"rect",mode:"gray",x:2,y:1,width:2,height:1}],outputPath:"derived/map.pgm"};
+    const dry=await tools.get("mapcanvas_preview").handler(args,api);
+    const im=png.decode(Buffer.from(dry.images[1].dataBase64,"base64"));
+    assert.equal(im.data[8],128);assert.equal(im.data[9],128);
+    const output=await tools.get("mapcanvas_edit").handler(args,api);
+    const raster=core.pgm(Buffer.from(output[0].proposal.content));
+    assert.equal(raster.data[8],128);assert.equal(raster.data[0],128);
+    assert.deepEqual([...core.pgm(fs.readFileSync(path.join(dir,"map.pgm"))).data],[...m.data]);
+  }));
