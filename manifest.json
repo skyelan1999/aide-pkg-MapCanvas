@@ -1,0 +1,27 @@
+{
+  "id": "mapcanvas",
+  "name": "栅图 MapCanvas",
+  "version": "0.1.0",
+  "main": "index.js",
+  "description": "ROS 栅格地图工作台：YAML/PGM/PNG 导入、画墙擦墙、撤销重做与原图确认保存。",
+  "workbench": {
+    "protocol": 1,
+    "entry": "workbench.html",
+    "title": "栅图 MapCanvas",
+    "tools": [
+      "mapcanvas_sources",
+      "mapcanvas_browse",
+      "mapcanvas_read"
+    ],
+    "fileHandler": {
+      "extensions": [
+        ".pgm",
+        ".png"
+      ],
+      "priority": -100,
+      "editable": true
+    }
+  },
+  "author": "skyelan1999",
+  "license": "MIT"
+}

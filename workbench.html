@@ -1,0 +1,1066 @@
+<!doctype html><meta charset="utf-8" /><title>栅图 MapCanvas</title
+><style>
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    font: 13px system-ui;
+  }
+  nav {
+    padding: 4px;
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  main {
+    flex: 1;
+    min-height: 150px;
+    position: relative;
+    overflow: hidden;
+    background: #999;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+  }
+  #ring {
+    position: absolute;
+    pointer-events: none;
+    border: 1px solid white;
+    outline: 1px solid black;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  [hidden] {
+    display: none !important;
+  }
+  [aria-pressed="true"] {
+    background: #bde0ff;
+  }
+  #list {
+    max-height: 100px;
+    overflow: auto;
+  }
+  #list button {
+    display: block;
+  }
+  body {
+    color-scheme: light dark;
+    background: #f7f8fa;
+    color: #1d2939;
+  }
+  nav {
+    padding: 8px 12px;
+    border-bottom: 1px solid #8893a633;
+    gap: 6px;
+  }
+  button,
+  input,
+  select {
+    font: inherit;
+    border: 1px solid #8d99ae66;
+    border-radius: 6px;
+    padding: 6px 9px;
+    background: transparent;
+    color: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid #5085e5;
+    outline-offset: 2px;
+  }
+  input[type="checkbox"] {
+    accent-color: #5085e5;
+  }
+  #meta,
+  #status {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+  #status {
+    min-height: 18px;
+    border-top: 1px solid #8893a633;
+  }
+  #list:empty {
+    display: none;
+  }
+  #list {
+    padding: 0 12px;
+  }
+  main {
+    background: #252c36;
+  }
+  #yaml,
+  #img {
+    flex: 1;
+    min-width: 130px;
+  }
+  @media (prefers-color-scheme: dark) {
+    body {
+      background: #171b22;
+      color: #e6eaf0;
+    }
+  }
+  @media (max-width: 600px) {
+    nav {
+      padding: 6px;
+    }
+    #meta {
+      font-size: 11px;
+    }
+  }
+</style>
+<nav>
+  <b>栅图 MapCanvas 0.1.0</b
+  ><select id="source">
+    <option value="workspace">工作目录</option></select
+  ><button id="refresh">刷新来源</button
+  ><label><input id="local" type="checkbox" />本机文件</label
+  ><input id="pick" type="file" multiple accept=".yaml,.yml,.pgm,.png" /><label
+    ><input id="discard" type="checkbox" />允许丢弃</label
+  ><button id="load">导入</button>
+</nav>
+<nav>
+  <input id="dir" value="." /><button id="browse">浏览</button
+  ><button id="up">上级</button><input id="yaml" placeholder="YAML路径" /><input
+    id="img"
+    placeholder="图片留空自动找"
+  />
+</nav>
+<div id="list"></div>
+<nav>
+  <button id="wall" title="画墙" aria-label="画墙">🖌</button
+  ><button id="erase" title="擦墙" aria-label="擦墙">▱</button
+  ><button id="pan" title="平移" aria-label="平移">✋</button
+  ><label
+    >直径<input
+      id="brush"
+      type="number"
+      min="1"
+      max="200"
+      value="5"
+      style="width: 50px"
+    />px</label
+  ><button id="undo">撤销</button><button id="redo">重做</button
+  ><button id="minus">−</button><button id="plus">＋</button
+  ><button id="fit">适应</button><button id="actual">1:1</button
+  ><button id="direct" title="保存原图" aria-label="保存原图">💾</button
+  ><button id="abort" hidden>取消待保存</button
+  ><input id="name" value="map_edited" /><button id="export">导出ZIP</button>
+</nav>
+<div id="meta">滚轮缩放；空格/中键平移。</div>
+<main>
+  <canvas id="cv"></canvas>
+  <div id="ring" hidden></div>
+</main>
+<div id="status">等待连接</div>
+<script>
+  "use strict";
+  (() => {
+    const $ = (s) => document.getElementById(s),
+      C = $("cv"),
+      X = C.getContext("2d"),
+      O = document.createElement("canvas"),
+      Y = O.getContext("2d"),
+      T = new TextEncoder(),
+      U = [],
+      R = [];
+    let M,
+      A,
+      z = 1,
+      x = 0,
+      y = 0,
+      d,
+      h,
+      sp = false,
+      t = "pan",
+      busy = false,
+      closed = false,
+      port,
+      req,
+      seq = 0,
+      dirty = false,
+      source = "workspace",
+      target,
+      version,
+      pending = false,
+      announced,
+      exp;
+    const E = (s) => {
+        throw Error(s);
+      },
+      N = (s) => ($("status").textContent = s);
+    function cursor() {
+      const r = $("ring"),
+        s = d?.s || +$("brush").value,
+        pan = sp || d?.pan || t === "pan";
+      r.hidden = !M || busy || closed || pending || pan || !h;
+      if (!r.hidden) {
+        r.style.left = h.x + "px";
+        r.style.top = h.y + "px";
+        r.style.width = r.style.height = s * z + "px";
+      }
+      C.style.cursor = pan ? "grab" : r.hidden ? "default" : "none";
+    }
+    function lock() {
+      const b = busy || closed || pending;
+      document
+        .querySelectorAll("button,input,select")
+        .forEach((e) => (e.disabled = b));
+      for (const k of [
+        "wall",
+        "erase",
+        "pan",
+        "brush",
+        "undo",
+        "redo",
+        "minus",
+        "plus",
+        "fit",
+        "actual",
+        "export",
+      ])
+        $(k).disabled = b || !M;
+      for (const k of ["wall", "erase", "pan"])
+        $(k).setAttribute("aria-pressed", String(k === t));
+      $("undo").disabled ||= !U.length;
+      $("redo").disabled ||= !R.length;
+      $("direct").disabled = b || !target || !dirty || !port;
+      $("abort").hidden = !pending;
+      $("abort").disabled = busy || closed;
+      cursor();
+      setTimeout(report, 0);
+    }
+    function stop(s) {
+      closed = true;
+      port?.close();
+      if (req) {
+        clearTimeout(req.timer);
+        req.reject(Error(s));
+        req = null;
+      }
+      N(s);
+      lock();
+    }
+    function request(method, a = {}, tool = "") {
+      if (!port || closed || req) return Promise.reject(Error("未连接或正忙"));
+      const id = "r_" + ++seq;
+      return new Promise((resolve, reject) => {
+        req = {
+          id,
+          resolve,
+          reject,
+          timer: setTimeout(
+            () => stop("超时；请核对原文件，不要重复保存"),
+            120000,
+          ),
+        };
+        port.postMessage({
+          protocol: 1,
+          requestId: id,
+          method,
+          tool,
+          arguments: a,
+          attachments: [],
+        });
+      });
+    }
+    const call = (t, a) => request("tool.call", a, t),
+      args = (a) => (source === "workspace" ? a : { ...a, source });
+    async function run(f) {
+      if (busy || closed || req) return;
+      busy = true;
+      lock();
+      try {
+        await f();
+      } catch (e) {
+        N("操作失败：" + e.message);
+      } finally {
+        busy = false;
+        lock();
+      }
+    }
+    async function report() {
+      if (!port || busy || closed || req || announced === dirty) return;
+      announced = dirty;
+      try {
+        await request("document.dirty", { dirty });
+      } catch {
+        announced = undefined;
+      }
+    }
+    async function sources() {
+      const r = await call("mapcanvas_sources", {}),
+        ss = r.sources || [];
+      if (!ss.length) E("没有可见文件来源");
+      $("source").replaceChildren();
+      for (const s of ss) {
+        const o = document.createElement("option");
+        o.value = s.id;
+        o.textContent = s.name || s.id;
+        $("source").append(o);
+      }
+      if (!ss.some((s) => s.id === source)) source = ss[0].id;
+      $("source").value = source;
+      N("来源已加载；只读引用也可导入");
+    }
+    $("refresh").onclick = () => run(sources);
+    $("source").onchange = () => {
+      source = $("source").value;
+      $("dir").value = ".";
+      $("yaml").value = $("img").value = "";
+      $("list").replaceChildren();
+    };
+    async function read(path) {
+      let b,
+        hash,
+        n = 0;
+      do {
+        const r = await call("mapcanvas_read", args({ path, offset: n }));
+        if (
+          !Number.isInteger(r.total) ||
+          r.total < 0 ||
+          r.total > 8388608 ||
+          r.offset !== n
+        )
+          E("范围错误");
+        if (!b) {
+          b = new Uint8Array(r.total);
+          hash = r.sha256;
+        } else if (hash !== r.sha256 || b.length !== r.total) E("文件改变");
+        const p = Uint8Array.from(atob(r.content), (v) => v.charCodeAt(0));
+        if (
+          p.length !== r.bytes ||
+          n + p.length > b.length ||
+          (!p.length && n < b.length)
+        )
+          E("分块错误");
+        b.set(p, n);
+        n += p.length;
+      } while (n < b.length);
+      read.hash = hash;
+      return b;
+    }
+    function yaml(text) {
+      const l = text.replace(/^\uFEFF/, "").split(/\r\n|\r|\n/),
+        v = Object.create(null),
+        rows = l
+          .map((s, i) => ({
+            i,
+            m: /^( *)([\w-]+|"[\w-]+"|'[\w-]+')\s*:(.*)$/.exec(s),
+          }))
+          .filter((r) => r.m);
+      if (
+        !rows.length ||
+        l.filter((s) => s.trim() === "---").length > 1 ||
+        l.some((s) => /^ *\t/.test(s))
+      )
+        E("不支持的YAML结构");
+      const base = Math.min(...rows.map((r) => r.m[1].length));
+      let idx = -1;
+      for (const { i, m } of rows) {
+        if (m[1].length !== base) continue;
+        const k = m[2].replace(/^['"]|['"]$/g, "");
+        if (Object.hasOwn(v, k)) E("YAML第" + (i + 1) + "行重复键 " + k);
+        let s = m[3].replace(/\s+#.*$/, "").trim();
+        if (k === "origin") {
+          if (!s) {
+            const a = [];
+            for (let j = i + 1; j < l.length; j++) {
+              const n = l[j].replace(/\s+#.*$/, "").trim();
+              if (!n || n[0] === "#") continue;
+              const q = /^-\s+(.+)$/.exec(n);
+              if (!q) break;
+              a.push(q[1]);
+            }
+            s = "[" + a.join(",") + "]";
+          } else
+            for (
+              let j = i + 1;
+              s[0] === "[" && !s.includes("]") && j < l.length;
+              j++
+            )
+              s += " " + l[j].replace(/\s+#.*$/, "").trim();
+        }
+        if (s[0] === '"') s = JSON.parse(s);
+        else if (s[0] === "'") {
+          if (!/^'(?:[^']|'')*'$/.test(s)) E("YAML引号错误");
+          s = s.slice(1, -1).replace(/''/g, "'");
+        }
+        v[k] = s;
+        if (k === "image") idx = i;
+      }
+      const num = (s) =>
+          /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?$/i.test(s) &&
+          Number.isFinite(+s),
+        r = +v.resolution,
+        n = +(v.negate ?? 0),
+        f = +v.free_thresh,
+        o = +v.occupied_thresh;
+      if (
+        !num(v.resolution) ||
+        !num(v.free_thresh) ||
+        !num(v.occupied_thresh) ||
+        !num(v.negate ?? "0") ||
+        r <= 0 ||
+        ![0, 1].includes(n) ||
+        f < 0 ||
+        f >= o ||
+        o > 1 ||
+        !v.image ||
+        /[\x00-\x1f]/.test(v.image) ||
+        (v.mode && v.mode !== "trinary")
+      )
+        E("地图参数错误");
+      if (!/^\[[^\[\]]*\]$/.test(v.origin || "")) E("origin格式错误");
+      const a = v.origin
+        .slice(1, -1)
+        .split(",")
+        .map((s) => s.trim());
+      if (a.at(-1) === "") a.pop();
+      if (a.length !== 3 || !a.every(num)) E("origin需三个数字");
+      return { l, idx, image: v.image, r, n, a };
+    }
+    function path(base, s) {
+      if (
+        s.startsWith("/") ||
+        /^[A-Za-z][A-Za-z0-9+.-]*:/.test(s) ||
+        /[\\\x00-\x1f]/.test(s)
+      )
+        E("请手动指定图片");
+      const a = base.split("/").slice(0, -1);
+      for (const p of s.split("/"))
+        if (p === "..") {
+          if (!a.length) E("image越界");
+          a.pop();
+        } else if (p && p !== ".") a.push(p);
+      return a.join("/");
+    }
+    function pgm(b) {
+      let p = 0;
+      const ws = (c) => [9, 10, 11, 12, 13, 32].includes(c),
+        skip = () => {
+          while (p < b.length) {
+            if (ws(b[p])) p++;
+            else if (b[p] === 35) {
+              while (p < b.length && ![10, 13].includes(b[p])) p++;
+            } else break;
+          }
+        },
+        tok = () => {
+          skip();
+          let s = "";
+          while (p < b.length && !ws(b[p]) && b[p] !== 35) {
+            s += String.fromCharCode(b[p++]);
+            if (s.length > 64) E("PGM错误");
+          }
+          return s;
+        },
+        num = () => {
+          const s = tok();
+          if (!/^\d+$/.test(s)) E("PGM数字错误");
+          return +s;
+        };
+      const t = tok(),
+        w = num(),
+        h = num(),
+        max = num(),
+        n = w * h;
+      if (
+        !["P2", "P5"].includes(t) ||
+        !w ||
+        !h ||
+        w > 16384 ||
+        h > 16384 ||
+        n > 4194304 ||
+        max < 1 ||
+        max > 65535
+      )
+        E("PGM尺寸/格式错误");
+      const data = new Uint16Array(n);
+      if (t === "P5") {
+        if (!ws(b[p])) E("PGM分隔错误");
+        if (b[p++] === 13 && b[p] === 10) p++;
+        if (b.length - p !== n * (max > 255 ? 2 : 1)) E("PGM长度错误");
+        for (let i = 0; i < n; i++)
+          data[i] = max > 255 ? b[p++] * 256 + b[p++] : b[p++];
+      } else {
+        for (let i = 0; i < n; i++) {
+          const value = num();
+          if (value > max) E("像素超限");
+          data[i] = value;
+        }
+        skip();
+        if (p !== b.length) E("PGM多余数据");
+      }
+      if (data.some((v) => v > max)) E("像素超限");
+      return { w, h, max, data };
+    }
+    async function image(b, s) {
+      if (/\.pgm$/i.test(s)) return pgm(b);
+      if (
+        !/\.png$/i.test(s) ||
+        b.length < 33 ||
+        b[24] !== 8 ||
+        [137, 80, 78, 71, 13, 10, 26, 10].some((v, i) => b[i] !== v)
+      )
+        E("需要8位灰度PNG");
+      const q = new DataView(b.buffer, b.byteOffset),
+        w = q.getUint32(16),
+        h = q.getUint32(20);
+      if (!w || !h || w > 16384 || h > 16384 || w * h > 4194304)
+        E("PNG尺寸超限");
+      const bm = await createImageBitmap(new Blob([b]), {
+        colorSpaceConversion: "none",
+        premultiplyAlpha: "none",
+      });
+      try {
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const x = c.getContext("2d");
+        x.drawImage(bm, 0, 0);
+        const p = x.getImageData(0, 0, w, h).data,
+          data = new Uint16Array(w * h);
+        for (let i = 0; i < data.length; i++) {
+          const j = i * 4;
+          if (p[j + 3] !== 255 || p[j] !== p[j + 1] || p[j] !== p[j + 2])
+            E("需要不透明灰度PNG");
+          data[i] = p[j];
+        }
+        return { w, h, max: 255, data };
+      } finally {
+        bm.close();
+      }
+    }
+    function draw() {
+      const r = devicePixelRatio || 1;
+      X.setTransform(1, 0, 0, 1, 0, 0);
+      X.clearRect(0, 0, C.width, C.height);
+      if (M) {
+        X.setTransform(r * z, 0, 0, r * z, r * x, r * y);
+        X.imageSmoothingEnabled = false;
+        X.drawImage(O, 0, 0);
+      }
+      cursor();
+    }
+    function raster() {
+      const p = Y.createImageData(M.w, M.h);
+      for (let i = 0; i < M.data.length; i++) {
+        const j = i * 4,
+          g = Math.round((M.data[i] * 255) / M.max);
+        p.data[j] = p.data[j + 1] = p.data[j + 2] = g;
+        p.data[j + 3] = 255;
+      }
+      Y.putImageData(p, 0, 0);
+      draw();
+    }
+    function fit() {
+      if (!M || d || pending) return;
+      z = Math.max(
+        0.01,
+        Math.min(32, (C.clientWidth - 24) / M.w, (C.clientHeight - 24) / M.h),
+      );
+      x = (C.clientWidth - M.w * z) / 2;
+      y = (C.clientHeight - M.h * z) / 2;
+      draw();
+    }
+    function zoom(f, a = C.clientWidth / 2, b = C.clientHeight / 2) {
+      if (!M || d || busy || closed || pending) return;
+      const n = Math.max(0.01, Math.min(64, z * f));
+      x = a - ((a - x) * n) / z;
+      y = b - ((b - y) * n) / z;
+      z = n;
+      draw();
+    }
+    const obs = new ResizeObserver(() => {
+      const r = devicePixelRatio || 1;
+      C.width = Math.max(1, Math.round(C.clientWidth * r));
+      C.height = Math.max(1, Math.round(C.clientHeight * r));
+      h = null;
+      draw();
+    });
+    obs.observe(C);
+    async function bind() {
+      return request("map.document.bind", { ...target, version });
+    }
+    async function file(f, max) {
+      if (!f || f.size > max) E("文件缺失/超限");
+      return new Uint8Array(await f.arrayBuffer());
+    }
+    $("load").onclick = () =>
+      run(async () => {
+        if (d || pending) E("请结束笔画并保存或取消草稿");
+        if (dirty && !$("discard").checked) E("请先保存、导出或允许丢弃");
+        let a, m, pp, target0, hash;
+        const dec = (b) => new TextDecoder("utf-8", { fatal: true }).decode(b);
+        if ($("local").checked) {
+          const fs = [...$("pick").files],
+            ys = fs.filter((f) => /\.ya?ml$/i.test(f.name));
+          if (ys.length !== 1) E("请选择一个YAML及图片");
+          a = yaml(dec(await file(ys[0], 65536)));
+          const ps = fs.filter(
+            (f) =>
+              f.name === a.image.split(/[\\/]/).pop() &&
+              /\.(pgm|png)$/i.test(f.name),
+          );
+          if (ps.length !== 1) E("请选择唯一图片：" + a.image);
+          m = await image(await file(ps[0], 8388608), ps[0].name);
+        } else {
+          const yp = $("yaml").value.trim();
+          if (!/\.ya?ml$/i.test(yp)) E("请选择YAML");
+          const b = await read(yp);
+          if (b.length > 65536) E("YAML超限");
+          a = yaml(dec(b));
+          pp = $("img").value.trim() || path(yp, a.image);
+          m = await image(await read(pp), pp);
+          target0 = { source, path: pp };
+          hash = read.hash;
+        }
+        M = m;
+        A = a;
+        target = target0;
+        version = hash;
+        U.length = R.length = 0;
+        dirty = false;
+        announced = undefined;
+        $("discard").checked = false;
+        if (pp) $("img").value = pp;
+        t = "pan";
+        O.width = M.w;
+        O.height = M.h;
+        $("meta").textContent =
+          M.w +
+          "×" +
+          M.h +
+          " px · " +
+          A.r +
+          " m/px · origin [" +
+          A.a +
+          "]" +
+          (target ? " · " + target.source + "/" + target.path : "");
+        raster();
+        fit();
+        if (target) {
+          try {
+            const r = await bind();
+            N(
+              r.editable
+                ? "已导入，可用软盘准备保存"
+                : "已导入，只读来源可编辑导出",
+            );
+          } catch (e) {
+            N("已导入；原图保存需宿主补丁：" + e.message);
+          }
+        } else N("已导入，本机文件请导出ZIP");
+      });
+    const pt = (e) => {
+        const r = C.getBoundingClientRect();
+        return { x: e.clientX - r.left, y: e.clientY - r.top };
+      },
+      px = (p) => ({
+        x: Math.max(-200, Math.min(M.w + 200, (p.x - x) / z)),
+        y: Math.max(-200, Math.min(M.h + 200, (p.y - y) / z)),
+      });
+    function trim() {
+      while (
+        U.length > 30 ||
+        [...U, ...R].reduce((n, a) => n + a.byteLength, 0) > 50331648
+      ) {
+        if (U.length > 1) U.shift();
+        else if (R.length) R.shift();
+        else break;
+      }
+    }
+    function stamp(p) {
+      const r = d.s / 2;
+      for (
+        let yy = Math.max(0, Math.floor(p.y - r));
+        yy <= Math.min(M.h - 1, Math.floor(p.y + r));
+        yy++
+      )
+        for (
+          let xx = Math.max(0, Math.floor(p.x - r));
+          xx <= Math.min(M.w - 1, Math.floor(p.x + r));
+          xx++
+        ) {
+          if (
+            d.s === 1
+              ? xx !== Math.floor(p.x) || yy !== Math.floor(p.y)
+              : (xx + 0.5 - p.x) ** 2 + (yy + 0.5 - p.y) ** 2 > r * r
+          )
+            continue;
+          const i = yy * M.w + xx;
+          if (M.data[i] !== d.v) {
+            M.data[i] = d.v;
+            d.changed = true;
+          }
+        }
+    }
+    function paint(p) {
+      const a = d.last,
+        n = Math.ceil(
+          Math.hypot(p.x - a.x, p.y - a.y) / Math.max(0.5, d.s / 4),
+        );
+      for (let i = 0; i <= n; i++)
+        stamp({
+          x: a.x + (p.x - a.x) * (n ? i / n : 0),
+          y: a.y + (p.y - a.y) * (n ? i / n : 0),
+        });
+      d.last = p;
+      raster();
+    }
+    C.onpointerdown = (e) => {
+      if (!M || busy || closed || pending || d || ![0, 1].includes(e.button))
+        return;
+      e.preventDefault();
+      const p = pt(e),
+        pan = sp || e.button === 1 || t === "pan",
+        s = +$("brush").value;
+      if (!pan && (!Number.isInteger(s) || s < 1 || s > 200)) {
+        N("笔刷需1–200像素");
+        return;
+      }
+      h = p;
+      C.setPointerCapture(e.pointerId);
+      d = { id: e.pointerId, pan, last: pan ? p : px(p) };
+      if (!pan) {
+        d.before = M.data.slice();
+        d.s = s;
+        d.v = (t === "wall" ? A.n : 1 - A.n) * M.max;
+        paint(d.last);
+      }
+      cursor();
+    };
+    C.onpointermove = (e) => {
+      h = pt(e);
+      if (!d || d.id !== e.pointerId) {
+        cursor();
+        return;
+      }
+      if (d.pan) {
+        x += h.x - d.last.x;
+        y += h.y - d.last.y;
+        d.last = h;
+        draw();
+      } else paint(px(h));
+    };
+    C.onpointerleave = () => {
+      h = null;
+      cursor();
+    };
+    function end(e, cancel = false) {
+      if (!d || e.pointerId !== d.id) return;
+      const a = d;
+      d = null;
+      if (!a.pan) {
+        if (cancel) {
+          M.data = a.before;
+          raster();
+        } else if (a.changed) {
+          U.push(a.before);
+          R.length = 0;
+          trim();
+          dirty = true;
+          N("已编辑，未保存");
+        }
+      }
+      lock();
+    }
+    C.onpointerup = (e) => {
+      if (d && !d.pan && e.pointerId === d.id) paint(px(pt(e)));
+      end(e);
+    };
+    C.onpointercancel = (e) => end(e, true);
+    C.onlostpointercapture = (e) => end(e, true);
+    C.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        h = pt(e);
+        zoom(
+          Math.exp(-Math.max(-300, Math.min(300, e.deltaY)) * 0.003),
+          h.x,
+          h.y,
+        );
+      },
+      { passive: false },
+    );
+    function travel(a, b) {
+      if (!M || busy || pending || closed || d || !a.length) return;
+      b.push(M.data);
+      M.data = a.pop();
+      trim();
+      dirty = true;
+      raster();
+      lock();
+    }
+    for (const k of ["wall", "erase", "pan"])
+      $(k).onclick = () => {
+        if (!d) {
+          t = k;
+          lock();
+        }
+      };
+    $("undo").onclick = () => travel(U, R);
+    $("redo").onclick = () => travel(R, U);
+    $("minus").onclick = () => zoom(1 / 1.3);
+    $("plus").onclick = () => zoom(1.3);
+    $("fit").onclick = fit;
+    $("actual").onclick = () => zoom(1 / z);
+    $("brush").oninput = cursor;
+    window.onkeydown = (e) => {
+      if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        sp = true;
+        cursor();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        travel(e.shiftKey ? R : U, e.shiftKey ? U : R);
+      }
+    };
+    window.onkeyup = (e) => {
+      if (e.code === "Space") {
+        sp = false;
+        cursor();
+      }
+    };
+    window.onblur = () => {
+      sp = false;
+      h = null;
+      if (d) end({ pointerId: d.id }, true);
+      cursor();
+    };
+    function pgmOut() {
+      const h = T.encode("P5\n" + M.w + " " + M.h + "\n" + M.max + "\n"),
+        b = new Uint8Array(h.length + M.data.length * (M.max > 255 ? 2 : 1));
+      b.set(h);
+      let p = h.length;
+      for (const v of M.data) {
+        if (M.max > 255) b[p++] = v >> 8;
+        b[p++] = v & 255;
+      }
+      return b;
+    }
+    async function imageOut() {
+      if (/\.pgm$/i.test(target.path)) return pgmOut();
+      const b = await new Promise((resolve, reject) =>
+        O.toBlob(
+          (v) => (v ? resolve(v) : reject(Error("PNG编码失败"))),
+          "image/png",
+        ),
+      );
+      return new Uint8Array(await b.arrayBuffer());
+    }
+    $("direct").onclick = () =>
+      run(async () => {
+        if (d || pending || !target) E("请结束笔画；本机文件请导出ZIP");
+        const r = await bind();
+        if (!r.editable) E("来源只读，请导出ZIP另存");
+        const b = await imageOut();
+        await request("document.save.begin", { size: b.length, version });
+        pending = true;
+        lock();
+        for (let offset = 0; offset < b.length; offset += 524288) {
+          let s = "";
+          const p = b.subarray(offset, offset + 524288);
+          for (let i = 0; i < p.length; i += 8192)
+            s += String.fromCharCode(...p.subarray(i, i + 8192));
+          await request("document.save.chunk", { offset, data: btoa(s) });
+        }
+        await request("document.save.request");
+        N("请点击宿主上方“保存到原文件”；尚未落盘");
+      });
+    $("abort").onclick = () =>
+      run(async () => {
+        await request("document.save.abort");
+        pending = false;
+        announced = undefined;
+        N("已取消草稿，画布编辑保留");
+      });
+    function zip(fs) {
+      const out = [],
+        cent = [];
+      let pos = 0,
+        size = 0;
+      const w = (b, p, v, n = 4) =>
+        new DataView(b.buffer)[n === 2 ? "setUint16" : "setUint32"](p, v, true);
+      for (const [name, b] of fs) {
+        let crc = -1;
+        for (const v of b) {
+          crc ^= v;
+          for (let i = 0; i < 8; i++)
+            crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+        }
+        crc = (crc ^ -1) >>> 0;
+        const n = T.encode(name),
+          h = new Uint8Array(30 + n.length),
+          c = new Uint8Array(46 + n.length);
+        w(h, 0, 0x04034b50);
+        w(h, 4, 20, 2);
+        w(h, 6, 2048, 2);
+        w(h, 12, 33, 2);
+        w(h, 14, crc);
+        w(h, 18, b.length);
+        w(h, 22, b.length);
+        w(h, 26, n.length, 2);
+        h.set(n, 30);
+        out.push(h, b);
+        w(c, 0, 0x02014b50);
+        w(c, 4, 20, 2);
+        w(c, 6, 20, 2);
+        w(c, 8, 2048, 2);
+        w(c, 14, 33, 2);
+        w(c, 16, crc);
+        w(c, 20, b.length);
+        w(c, 24, b.length);
+        w(c, 28, n.length, 2);
+        w(c, 42, pos);
+        c.set(n, 46);
+        cent.push(c);
+        pos += h.length + b.length;
+        size += c.length;
+      }
+      const e = new Uint8Array(22);
+      w(e, 0, 0x06054b50);
+      w(e, 8, fs.length, 2);
+      w(e, 10, fs.length, 2);
+      w(e, 12, size);
+      w(e, 16, pos);
+      const b = new Uint8Array(pos + size + 22);
+      let p = 0;
+      for (const v of [...out, ...cent, e]) {
+        b.set(v, p);
+        p += v.length;
+      }
+      return b;
+    }
+    $("export").onclick = () =>
+      run(async () => {
+        if (d || pending) E("请结束笔画并处理草稿");
+        const n = $("name").value.trim();
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(n))
+          E("名称需字母数字下划线连字符");
+        const l = A.l.slice();
+        l[A.idx] =
+          (l[A.idx].match(/^\s*/) || [""])[0] +
+          "image: " +
+          JSON.stringify(n + ".pgm");
+        const bytes = zip([
+          [n + ".yaml", T.encode(l.join("\n").replace(/\n*$/, "\n"))],
+          [n + ".pgm", pgmOut()],
+        ]).buffer;
+        exp = "export_" + ++seq;
+        parent.postMessage(
+          {
+            type: "aide.workbench.export",
+            protocol: 1,
+            pluginId: "mapcanvas",
+            requestId: exp,
+            name: n + ".zip",
+            bytes,
+          },
+          "*",
+          [bytes],
+        );
+        N("ZIP已生成，等待宿主保存入口；未确认落盘");
+      });
+    function browse(path) {
+      return run(async () => {
+        const r = await call("mapcanvas_browse", args({ path }));
+        $("dir").value = r.path;
+        $("list").replaceChildren();
+        for (const e of r.entries || []) {
+          const b = document.createElement("button");
+          b.textContent = (e.kind === "directory" ? "▸ " : "") + e.path;
+          b.onclick = () => {
+            if (e.kind === "directory") browse(e.path);
+            else if (/\.ya?ml$/i.test(e.path)) {
+              $("yaml").value = e.path;
+              $("img").value = "";
+            } else $("img").value = e.path;
+          };
+          $("list").append(b);
+        }
+        N("点击目录进入，点击文件选择");
+      });
+    }
+    $("browse").onclick = () => browse($("dir").value);
+    $("up").onclick = () => {
+      const p = $("dir").value;
+      browse(p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : ".");
+    };
+    $("yaml").onchange = () => ($("img").value = "");
+    window.addEventListener("message", (e) => {
+      if (e.source !== parent) return;
+      const m = e.data;
+      if (
+        m?.type === "aide.workbench.connect" &&
+        !port &&
+        !closed &&
+        m.protocol === 1 &&
+        m.pluginId === "mapcanvas" &&
+        e.ports?.length === 1
+      ) {
+        clearTimeout(timer);
+        port = e.ports[0];
+        port.onmessage = (e) => {
+          const r = e.data;
+          if (r?.event === "scope.revoked") {
+            stop("授权已变化，请重开；未自动保存");
+            return;
+          }
+          if (r?.event === "document.saved" && r.result?.saved) {
+            version = r.result.version;
+            pending = false;
+            dirty = false;
+            announced = undefined;
+            N("原图片已保存，YAML未改动");
+            lock();
+            return;
+          }
+          if (r?.event || !req || r.requestId !== req.id) return;
+          const p = req;
+          req = null;
+          clearTimeout(p.timer);
+          if (r.status === "result") p.resolve(r.result);
+          else p.reject(Error(r.error || "调用失败"));
+        };
+        port.start();
+        run(sources);
+      } else if (
+        m?.type === "aide.workbench.export.status" &&
+        m.protocol === 1 &&
+        m.requestId === exp
+      )
+        N(
+          m.status === "error"
+            ? "导出失败：" + m.error
+            : "宿主保存入口已显示；请保存并核对下载结果",
+        );
+    });
+    const timer = setTimeout(() => stop("连接超时，请重开"), 12000);
+    window.addEventListener("pagehide", () => {
+      clearTimeout(timer);
+      obs.disconnect();
+      stop("已关闭");
+    });
+    lock();
+    parent.postMessage(
+      { type: "aide.workbench.ready", protocol: 1, requestIds: "monotonic" },
+      "*",
+    );
+  })();
+</script>
